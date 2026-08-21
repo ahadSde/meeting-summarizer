@@ -1,0 +1,126 @@
+# Meeting Summarizer
+
+An asynchronous, local-first meeting-audio pipeline. Upload a recording and receive a timestamped transcript plus an action-oriented summary with decisions, action items, and open questions.
+
+## Architecture
+
+```text
+Browser (HTML + Tailwind)
+        | POST /api/meetings
+        v
+FastAPI ingestion -> SQLite (meeting metadata, transcript, summary)
+        | background task
+        v
+ffmpeg validation / normalization / audio chunks
+        v
+local faster-whisper transcription
+        v
+Groq chunk-then-reduce summarization
+        v
+GET /api/meetings/{id} -> results UI
+```
+
+## Stack
+
+| Concern | Choice | Rationale |
+| --- | --- | --- |
+| API | FastAPI | Typed endpoints and a clear background-task workflow |
+| Audio | ffmpeg | Media inspection, normalization, and chunking |
+| ASR | local `faster-whisper` | No hosted-ASR file limit; data stays local |
+| LLM | Groq `openai/gpt-oss-20b` | Fast summary generation with structured output support |
+| Storage | SQLite + SQLAlchemy | Durable results with minimal setup |
+| UI | HTML, JavaScript, Tailwind CDN | Fast, dependency-light demo interface |
+
+## Pipeline and reliability choices
+
+1. The upload endpoint checks format, size, readable duration, and maximum duration, then creates a persisted `queued` meeting.
+2. A background job normalizes audio to mono 16 kHz WAV. Audio over 20 minutes is divided into 10-minute chunks with a 3-second overlap.
+3. Local Whisper transcribes chunks with VAD silence filtering. Segment timestamps are offset and combined in chronological order.
+4. Long transcripts are split into safe text sections. Groq creates factual section summaries, then reduces them to one final meeting summary.
+5. Prompts require information to be explicitly supported by the transcript. Unknown owner/deadline fields are `null`.
+6. Groq is asked for JSON-schema output. The app normalizes missing empty categories to `[]`, retries only transient failures (network, server, rate limit), and records a safe error on failure.
+7. The browser polls the result endpoint without holding the upload request open. Temporary source/chunk files are removed after processing.
+
+## Example result
+
+```json
+{
+  "overview": "The team reviewed the release plan and outstanding testing work.",
+  "key_points": ["The release target is Friday."],
+  "decisions": [{ "text": "Ship version 2.1 on Friday.", "timestamp": "00:14:32" }],
+  "action_items": [{
+    "task": "Prepare release notes",
+    "owner": "Dev",
+    "deadline": "Thursday",
+    "timestamp": "00:18:05"
+  }],
+  "open_questions": []
+}
+```
+
+## Setup
+
+### Prerequisites
+
+- Python 3.9+
+- [ffmpeg](https://ffmpeg.org/)
+- A Groq API key
+
+```bash
+git clone <your-repository-url>
+cd meeting-summarizer
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+Set `GROQ_API_KEY` in `.env`, then run:
+
+```bash
+uvicorn app.main:app --reload
+```
+
+Open `http://127.0.0.1:8000`. The first transcription downloads the selected Whisper model.
+
+## Configuration
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `GROQ_API_KEY` | required | Used only for summaries |
+| `GROQ_MODEL` | `openai/gpt-oss-20b` | Groq chat model |
+| `WHISPER_MODEL` | `base` | Try `small` for higher accuracy at slower speed |
+| `MAX_UPLOAD_SIZE_MB` | `100` | Upload limit |
+| `MAX_AUDIO_DURATION_MINUTES` | `120` | Meeting duration limit |
+| `CHUNK_THRESHOLD_MINUTES` | `20` | Split audio above this duration |
+| `CHUNK_DURATION_MINUTES` | `10` | Each chunk duration |
+
+## API
+
+| Endpoint | Description |
+| --- | --- |
+| `POST /api/meetings` | Multipart upload field: `audio`; returns queued meeting metadata |
+| `GET /api/meetings/{id}` | Returns job status, transcript, summary, timings, and safe errors |
+| `GET /api/health` | Service/configuration health check |
+
+## Tests
+
+```bash
+pytest -q
+```
+
+The suite covers transcript chunking, backoff split behavior, and invalid file-type validation.
+
+## Known limitations
+
+- No speaker diarization yet; transcript segments are timestamped but not speaker-labeled.
+- Whisper accuracy/speed depend on hardware and model size.
+- Groq free-tier limits can delay long meetings; retries use exponential backoff.
+- In-process background jobs are right for a demo; production should use a durable queue and object storage.
+- Meeting history and Markdown/JSON export are sensible next UI additions.
+
+## Security
+
+- Never commit `.env` or API keys; `.env` is Git-ignored.
+- Temporary uploads are removed after processing.
+- A production deployment would add authentication, encrypted storage, retention controls, and recording-consent notices.
