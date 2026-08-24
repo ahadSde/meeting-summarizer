@@ -18,7 +18,6 @@ def test_process_meeting_success(tmp_path: Path) -> None:
     source_path = tmp_path / "source.wav"
     source_path.write_bytes(b"dummy audio")
 
-    fake_chunks = [(tmp_path / "chunk-000.wav", 0.0)]
     fake_transcript = "[00:00:01] Hello world"
     fake_segments = [{"start": 1.0, "end": 2.0, "text": "Hello world"}]
     fake_summary = {
@@ -29,13 +28,13 @@ def test_process_meeting_success(tmp_path: Path) -> None:
         "open_questions": [],
     }
 
-    with patch("app.jobs.prepare_chunks", return_value=fake_chunks) as mock_prep, \
-         patch("app.jobs.transcribe_chunks", return_value=(fake_transcript, fake_segments)) as mock_trans, \
+    with patch("app.jobs.normalize_audio") as mock_norm, \
+         patch("app.jobs.transcribe_audio", return_value=(fake_transcript, fake_segments)) as mock_trans, \
          patch("app.jobs.summarize_transcript", return_value=fake_summary) as mock_summ:
 
         process_meeting(meeting_id, source_path)
 
-        mock_prep.assert_called_once()
+        mock_norm.assert_called_once()
         mock_trans.assert_called_once()
         mock_summ.assert_called_once()
 
@@ -73,7 +72,7 @@ def test_process_meeting_failure_updates_status(tmp_path: Path) -> None:
     source_path = tmp_path / "fail.wav"
     source_path.write_bytes(b"dummy")
 
-    with patch("app.jobs.prepare_chunks", side_effect=RuntimeError("FFmpeg crashed")):
+    with patch("app.jobs.normalize_audio", side_effect=RuntimeError("FFmpeg crashed")):
         process_meeting(meeting_id, source_path)
 
     db = SessionLocal()

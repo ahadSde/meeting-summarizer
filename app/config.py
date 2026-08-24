@@ -14,8 +14,6 @@ class Settings(BaseSettings):
     whisper_model: str = "base"
     max_upload_size_mb: int = 100
     max_audio_duration_minutes: int = 120
-    chunk_threshold_minutes: int = 20
-    chunk_duration_minutes: int = 10
 
     @property
     def max_upload_bytes(self) -> int:

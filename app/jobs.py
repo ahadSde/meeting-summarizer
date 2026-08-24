@@ -7,15 +7,16 @@ from pathlib import Path
 from app.config import BASE_DIR, settings
 from app.database import SessionLocal
 from app.models import Meeting
-from app.services.asr import transcribe_chunks
-from app.services.audio import prepare_chunks
+from app.services.asr import transcribe_audio
+from app.services.audio import normalize_audio
 from app.services.summarizer import summarize_transcript
 
 logger = logging.getLogger(__name__)
 
 
 def process_meeting(meeting_id: str, source_path: Path) -> None:
-    started, db, chunks_dir = time.monotonic(), SessionLocal(), BASE_DIR / "tmp" / meeting_id
+    started, db = time.monotonic(), SessionLocal()
+    normalized_path = BASE_DIR / "tmp" / f"{meeting_id}.wav"
     try:
         meeting = db.get(Meeting, meeting_id)
         if not meeting:
@@ -23,10 +24,10 @@ def process_meeting(meeting_id: str, source_path: Path) -> None:
         meeting.status, meeting.stage = "processing", "Preparing audio"
         db.commit()
         logger.info("meeting_processing_started", extra={"meeting_id": meeting_id})
-        chunks = prepare_chunks(source_path, meeting.duration_seconds or 0, chunks_dir, settings.chunk_threshold_minutes * 60, settings.chunk_duration_minutes * 60)
+        normalize_audio(source_path, normalized_path)
         meeting.stage = "Transcribing audio"
         db.commit()
-        transcript, _segments = transcribe_chunks(chunks, settings.whisper_model)
+        transcript, _segments = transcribe_audio(normalized_path, settings.whisper_model)
         meeting.transcript, meeting.stage = transcript, "Generating summary"
         db.commit()
         meeting.summary = summarize_transcript(transcript, settings.groq_api_key, settings.groq_model)
@@ -44,5 +45,5 @@ def process_meeting(meeting_id: str, source_path: Path) -> None:
             db.commit()
     finally:
         db.close()
-        shutil.rmtree(chunks_dir, ignore_errors=True)
+        normalized_path.unlink(missing_ok=True)
         source_path.unlink(missing_ok=True)

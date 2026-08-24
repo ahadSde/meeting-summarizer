@@ -34,23 +34,26 @@ def validate_audio(path: Path, size_bytes: int, max_bytes: int, max_duration_sec
     return duration
 
 
-def prepare_chunks(source: Path, duration: float, output_dir: Path, threshold_seconds: int, chunk_seconds: int) -> list[tuple[Path, float]]:
-    """Normalize audio and split long recordings with a three-second overlap."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    if duration <= threshold_seconds:
-        chunks = [(output_dir / "chunk-000.wav", 0.0, duration)]
-    else:
-        overlap, start, index, chunks = 3, 0.0, 0, []
-        while start < duration:
-            chunks.append((output_dir / f"chunk-{index:03}.wav", start, min(chunk_seconds, duration - start)))
-            start += chunk_seconds - overlap
-            index += 1
-    prepared = []
-    for output, start, length in chunks:
-        command = ["ffmpeg", "-y", "-v", "error", "-ss", str(start), "-i", str(source), "-t", str(length), "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(output)]
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
-        if result.returncode != 0:
-            raise AudioError("Audio preparation failed. Please try another file.")
-        prepared.append((output, start))
-    return prepared
+def normalize_audio(source: Path, output_path: Path) -> Path:
+    """Normalize uploaded audio to mono 16 kHz 16-bit PCM WAV for native Whisper transcription."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        "ffmpeg",
+        "-y",
+        "-v",
+        "error",
+        "-i",
+        str(source),
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "pcm_s16le",
+        str(output_path),
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise AudioError("Audio preparation failed. Please try another file.")
+    return output_path
 

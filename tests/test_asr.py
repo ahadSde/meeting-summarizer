@@ -1,7 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from app.services.asr import _format_time, get_whisper_model, transcribe_chunks
+from app.services.asr import _format_time, get_whisper_model, transcribe_audio
 
 
 def test_format_time() -> None:
@@ -21,26 +21,18 @@ def test_get_whisper_model_caching() -> None:
         assert mock_cls.call_count == 1
 
 
-def test_transcribe_chunks_calculates_timestamps_and_formats_output(tmp_path: Path) -> None:
-    chunk1 = tmp_path / "chunk-000.wav"
-    chunk2 = tmp_path / "chunk-001.wav"
-    chunk1.write_bytes(b"data1")
-    chunk2.write_bytes(b"data2")
+def test_transcribe_audio_formats_transcript_and_segments(tmp_path: Path) -> None:
+    audio_file = tmp_path / "meeting.wav"
+    audio_file.write_bytes(b"data")
 
     mock_model = MagicMock()
-
     seg1 = MagicMock(start=0.5, end=3.2, text=" Welcome everyone. ")
     seg2 = MagicMock(start=4.0, end=7.5, text=" Let's begin the review. ")
-    seg3 = MagicMock(start=1.0, end=4.0, text=" We will ship on Friday. ")
+    seg3 = MagicMock(start=601.0, end=604.0, text=" We will ship on Friday. ")
 
-    # First chunk returns seg1, seg2; second chunk returns seg3
-    mock_model.transcribe.side_effect = [
-        ([seg1, seg2], None),
-        ([seg3], None),
-    ]
+    mock_model.transcribe.return_value = ([seg1, seg2, seg3], None)
 
-    chunks = [(chunk1, 0.0), (chunk2, 600.0)]
-    transcript, segments = transcribe_chunks(chunks, model_name="base", model=mock_model)
+    transcript, segments = transcribe_audio(audio_file, model_name="base", model=mock_model)
 
     assert len(segments) == 3
     assert segments[0] == {"start": 0.5, "end": 3.2, "text": "Welcome everyone."}
@@ -53,20 +45,20 @@ def test_transcribe_chunks_calculates_timestamps_and_formats_output(tmp_path: Pa
         "[00:10:01] We will ship on Friday."
     )
     assert transcript == expected_transcript
+    mock_model.transcribe.assert_called_once_with(str(audio_file), vad_filter=True, beam_size=5)
 
 
-def test_transcribe_chunks_skips_empty_and_deduplicates_adjacent(tmp_path: Path) -> None:
-    chunk = tmp_path / "chunk-000.wav"
-    chunk.write_bytes(b"data")
+def test_transcribe_audio_skips_empty_segments(tmp_path: Path) -> None:
+    audio_file = tmp_path / "meeting.wav"
+    audio_file.write_bytes(b"data")
 
     mock_model = MagicMock()
     seg_empty = MagicMock(start=0.0, end=1.0, text="   ")
     seg_valid = MagicMock(start=1.0, end=2.0, text="Hello world")
-    seg_duplicate = MagicMock(start=2.0, end=3.0, text="hello world")
 
-    mock_model.transcribe.return_value = ([seg_empty, seg_valid, seg_duplicate], None)
+    mock_model.transcribe.return_value = ([seg_empty, seg_valid], None)
 
-    transcript, segments = transcribe_chunks([(chunk, 0.0)], model_name="base", model=mock_model)
+    transcript, segments = transcribe_audio(audio_file, model_name="base", model=mock_model)
 
     assert len(segments) == 1
     assert segments[0]["text"] == "Hello world"

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.services.audio import AudioError, duration_seconds, prepare_chunks, validate_audio
+from app.services.audio import AudioError, duration_seconds, normalize_audio, validate_audio
 
 
 def test_invalid_extension_is_rejected(tmp_path: Path) -> None:
@@ -73,44 +73,30 @@ def test_duration_seconds_valid(tmp_path: Path) -> None:
         assert duration_seconds(file) == 42.50
 
 
-def test_prepare_chunks_single_short_file(tmp_path: Path) -> None:
-    source = tmp_path / "short.wav"
-    source.write_bytes(b"audio")
-    out_dir = tmp_path / "chunks"
+def test_normalize_audio_success(tmp_path: Path) -> None:
+    source = tmp_path / "incoming.mp3"
+    source.write_bytes(b"dummy mp3 data")
+    output = tmp_path / "normalized.wav"
 
     mock_result = MagicMock(returncode=0)
     with patch("subprocess.run", return_value=mock_result) as mock_run:
-        chunks = prepare_chunks(source, duration=300.0, output_dir=out_dir, threshold_seconds=1200, chunk_seconds=600)
-        assert len(chunks) == 1
-        path, offset = chunks[0]
-        assert offset == 0.0
-        assert path.name == "chunk-000.wav"
+        result_path = normalize_audio(source, output)
+        assert result_path == output
         assert mock_run.call_count == 1
+        cmd = mock_run.call_args[0][0]
+        assert "ffmpeg" in cmd
+        assert "-ar" in cmd and "16000" in cmd
+        assert "-ac" in cmd and "1" in cmd
 
 
-def test_prepare_chunks_long_file_creates_overlapping_chunks(tmp_path: Path) -> None:
-    source = tmp_path / "long.wav"
-    source.write_bytes(b"audio")
-    out_dir = tmp_path / "chunks"
-
-    mock_result = MagicMock(returncode=0)
-    with patch("subprocess.run", return_value=mock_result) as mock_run:
-        chunks = prepare_chunks(source, duration=1500.0, output_dir=out_dir, threshold_seconds=1200, chunk_seconds=600)
-        assert len(chunks) == 3
-        assert chunks[0][1] == 0.0
-        assert chunks[1][1] == 597.0
-        assert chunks[2][1] == 1194.0
-        assert mock_run.call_count == 3
-
-
-def test_prepare_chunks_ffmpeg_failure(tmp_path: Path) -> None:
-    source = tmp_path / "broken.wav"
-    source.write_bytes(b"audio")
-    out_dir = tmp_path / "chunks"
+def test_normalize_audio_failure(tmp_path: Path) -> None:
+    source = tmp_path / "broken.mp3"
+    source.write_bytes(b"corrupt")
+    output = tmp_path / "output.wav"
 
     mock_result = MagicMock(returncode=1, stderr="Transcoding failed")
     with patch("subprocess.run", return_value=mock_result):
         with pytest.raises(AudioError, match="Audio preparation failed"):
-            prepare_chunks(source, duration=60.0, output_dir=out_dir, threshold_seconds=1200, chunk_seconds=600)
+            normalize_audio(source, output)
 
 
