@@ -2,6 +2,10 @@
 
 An asynchronous, local-first meeting-audio pipeline. Upload a recording and receive a timestamped transcript plus an action-oriented summary with decisions, action items, and open questions.
 
+## Demo Video
+
+[Watch the demo](https://github.com/user-attachments/assets/9a1e4282-332a-43c2-955a-70443a365713)
+
 ## Architecture
 
 ```text
