@@ -1,7 +1,7 @@
 import logging
 import shutil
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app.config import BASE_DIR, settings
@@ -30,7 +30,7 @@ def process_meeting(meeting_id: str, source_path: Path) -> None:
         meeting.transcript, meeting.stage = transcript, "Generating summary"
         db.commit()
         meeting.summary = summarize_transcript(transcript, settings.groq_api_key, settings.groq_model)
-        meeting.status, meeting.stage, meeting.completed_at = "completed", "Completed", datetime.utcnow()
+        meeting.status, meeting.stage, meeting.completed_at = "completed", "Completed", datetime.now(timezone.utc)
         meeting.processing_seconds = round(time.monotonic() - started, 2)
         db.commit()
         logger.info("meeting_processing_completed", extra={"meeting_id": meeting_id, "seconds": meeting.processing_seconds})
