@@ -1,11 +1,24 @@
+from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 
-def transcribe_chunks(chunks: list[tuple[Path, float]], model_name: str) -> tuple[str, list[dict]]:
-    """Transcribe locally and return readable text plus timestamped segments."""
+@lru_cache(maxsize=4)
+def get_whisper_model(model_name: str, device: str = "auto", compute_type: str = "auto") -> Any:
+    """Load and cache the Whisper model instance to avoid reload overhead on every job."""
     from faster_whisper import WhisperModel
 
-    model = WhisperModel(model_name, device="auto", compute_type="auto")
+    return WhisperModel(model_name, device=device, compute_type=compute_type)
+
+
+def transcribe_chunks(
+    chunks: list[tuple[Path, float]],
+    model_name: str,
+    model: Any = None,
+) -> tuple[str, list[dict]]:
+    """Transcribe locally and return readable text plus timestamped segments."""
+    if model is None:
+        model = get_whisper_model(model_name)
     transcript_segments = []
     for chunk_path, offset in chunks:
         segments, _info = model.transcribe(str(chunk_path), vad_filter=True, beam_size=5)
