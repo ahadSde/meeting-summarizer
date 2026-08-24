@@ -71,15 +71,9 @@ def test_completion_raises_empty_completion_error_on_whitespace_or_length_finish
         _completion(mock_client, "sys_prompt", "user_prompt", "model", {})
 
 
-def test_summarize_transcript_mocked_pipeline() -> None:
+def test_summarize_transcript_single_chunk_uses_direct_call() -> None:
     transcript = "[00:00:01] Alice: We will release next week."
 
-    section_output = {
-        "facts": ["Release planned for next week."],
-        "decisions": [{"text": "Release next week", "timestamp": "00:00:01"}],
-        "action_items": [],
-        "open_questions": [],
-    }
     final_output = {
         "overview": "The team agreed to release next week.",
         "key_points": ["Release is next week."],
@@ -92,11 +86,50 @@ def test_summarize_transcript_mocked_pipeline() -> None:
         mock_client = MagicMock()
         mock_groq_cls.return_value = mock_client
 
-        with patch("app.services.summarizer._json_completion", side_effect=[section_output, final_output]) as mock_json_comp:
+        with patch("app.services.summarizer._json_completion", return_value=final_output) as mock_json_comp:
             result = summarize_transcript(transcript, api_key="fake-key", model="test-model")
 
             assert result == final_output
-            assert mock_json_comp.call_count == 2
+            # Only 1 direct call for single-chunk transcripts!
+            assert mock_json_comp.call_count == 1
+
+
+def test_summarize_transcript_multi_chunk_uses_map_reduce() -> None:
+    transcript = "[00:00:01] Chunk 1 content\n[00:15:00] Chunk 2 content"
+
+    section_output_1 = {"facts": ["Fact 1"], "decisions": [], "action_items": [], "open_questions": []}
+    section_output_2 = {"facts": ["Fact 2"], "decisions": [], "action_items": [], "open_questions": []}
+    final_output = {"overview": "Combined", "key_points": ["Point 1"], "decisions": [], "action_items": [], "open_questions": []}
+
+    with patch("app.services.summarizer.Groq") as mock_groq_cls, \
+         patch("app.services.summarizer.chunk_transcript", return_value=["chunk1", "chunk2"]):
+        mock_client = MagicMock()
+        mock_groq_cls.return_value = mock_client
+
+        with patch("app.services.summarizer._json_completion", side_effect=[section_output_1, section_output_2, final_output]) as mock_json_comp:
+            result = summarize_transcript(transcript, api_key="fake-key", model="test-model")
+
+            assert result == final_output
+            # 2 section calls + 1 reduce call
+            assert mock_json_comp.call_count == 3
+
+
+def test_summarize_transcript_single_chunk_fallback_to_map_reduce_on_overflow() -> None:
+    transcript = "[00:00:01] Single chunk that overflows completion."
+
+    section_output = {"facts": ["Recovered fact"], "decisions": [], "action_items": [], "open_questions": []}
+    final_output = {"overview": "Recovered", "key_points": [], "decisions": [], "action_items": [], "open_questions": []}
+
+    with patch("app.services.summarizer.Groq") as mock_groq_cls:
+        mock_client = MagicMock()
+        mock_groq_cls.return_value = mock_client
+
+        # First call (direct) raises EmptyCompletionError, fallback does 1 section + 1 reduce call
+        with patch("app.services.summarizer._json_completion", side_effect=[EmptyCompletionError("length"), section_output, final_output]) as mock_json_comp:
+            result = summarize_transcript(transcript, api_key="fake-key", model="test-model")
+
+            assert result == final_output
+            assert mock_json_comp.call_count == 3
 
 
 def test_summarize_section_backoff_recursively_splits_on_error() -> None:

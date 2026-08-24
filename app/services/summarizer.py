@@ -10,6 +10,10 @@ SECTION_SYSTEM_PROMPT = """You summarize one section of a meeting transcript. Us
 
 Return exactly one JSON object with every one of these keys: facts, decisions, action_items, open_questions. Every key is required, even when it has no content. Use [] for an empty list - never omit a key. Each decision must have text and timestamp. Each action item must have task, owner, deadline, and timestamp. Each open question must have text and timestamp."""
 
+DIRECT_SYSTEM_PROMPT = """You summarize a meeting transcript into an action-oriented summary. Use only information explicitly stated in the transcript. Do not infer or invent owners, dates, decisions, or action items. Use null for an explicitly mentioned but unknown owner or deadline.
+
+Return exactly one JSON object with every one of these keys: overview, key_points, decisions, action_items, open_questions. Every key is required, even when it has no content. Use [] for an empty list - never omit a key. Each decision must have text and timestamp. Each action item must have task, owner, deadline, and timestamp. Each open question must have text and timestamp."""
+
 FINAL_SYSTEM_PROMPT = """Combine these factual section summaries into one final meeting summary. Use only supplied facts. Do not create or infer missing details. Deduplicate repeated entries.
 
 Return exactly one JSON object with every one of these keys: overview, key_points, decisions, action_items, open_questions. Every key is required. Use [] for an empty list - never omit a key. Each decision must have text and timestamp. Each action item must have task, owner, deadline, and timestamp. Each open question must have text and timestamp."""
@@ -94,6 +98,17 @@ def summarize_transcript(transcript: str, api_key: str, model: str = "openai/gpt
     if not api_key:
         raise RuntimeError("GROQ_API_KEY is not configured.")
     client = Groq(api_key=api_key)
-    section_summaries = [_summarize_section_with_backoff(client, chunk, model) for chunk in chunk_transcript(transcript)]
+    chunks = chunk_transcript(transcript)
+
+    # For single-chunk transcripts, summarize directly in 1 LLM call to save latency and cost
+    if len(chunks) == 1:
+        try:
+            user_content = f"Meeting transcript:\n{chunks[0]}"
+            return _json_completion(client, DIRECT_SYSTEM_PROMPT, user_content, model, FINAL_SCHEMA)
+        except EmptyCompletionError:
+            # Fall back to Map-Reduce if the single chunk encounters a completion overflow
+            pass
+
+    section_summaries = [_summarize_section_with_backoff(client, chunk, model) for chunk in chunks]
     final_user_content = f"Section summaries:\n{json.dumps(section_summaries)}"
     return _json_completion(client, FINAL_SYSTEM_PROMPT, final_user_content, model, FINAL_SCHEMA)

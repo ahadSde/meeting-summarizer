@@ -36,7 +36,7 @@ GET /api/meetings/{id} -> results UI
 1. The upload endpoint checks format, size, readable duration, and maximum duration, then creates a persisted `queued` meeting.
 2. A background job normalizes audio to mono 16 kHz WAV. Audio over 20 minutes is divided into 10-minute chunks with a 3-second overlap.
 3. Local Whisper transcribes chunks with VAD silence filtering. Segment timestamps are offset and combined in chronological order.
-4. Long transcripts are split into safe text sections. Groq creates factual section summaries, then reduces them to one final meeting summary.
+4. Short transcripts are summarized in a single direct pass; long transcripts are split into sections with Map-Reduce combining.
 5. Prompts require information to be explicitly supported by the transcript. Unknown owner/deadline fields are `null`.
 6. Groq is asked for JSON-schema output. The app normalizes missing empty categories to `[]`, retries only transient failures (network, server, rate limit), and records a safe error on failure.
 7. The browser polls the result endpoint without holding the upload request open. Temporary source/chunk files are removed after processing.
