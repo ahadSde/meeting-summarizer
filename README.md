@@ -109,7 +109,7 @@ Open `http://127.0.0.1:8000`. The first transcription downloads the selected Whi
 pytest -q
 ```
 
-The suite covers transcript chunking, backoff split behavior, and invalid file-type validation.
+The suite covers API endpoints, file streaming validation, audio normalization and chunking, ASR transcription caching, Map-Reduce summarization, backoff error recovery, and background job lifecycle.
 
 ## Known limitations
 
