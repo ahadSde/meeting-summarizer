@@ -21,20 +21,23 @@ async function poll(id) {
   const response = await fetch(`/api/meetings/${id}`);
   const meeting = await response.json();
   status.textContent = meeting.status === 'failed' ? meeting.error_message : `${meeting.stage}…`;
-  if (meeting.status === 'completed') { status.textContent = `Completed in ${meeting.processing_seconds}s`; render(meeting); return; }
-  if (meeting.status !== 'failed') setTimeout(() => poll(id), 1500);
+  if (meeting.status === 'completed') { status.textContent = `Completed in ${meeting.processing_seconds}s`; render(meeting); return true; }
+  if (meeting.status === 'failed') return true;
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  return poll(id);
 }
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = form.querySelector('button');
-  button.disabled = true; results.classList.add('hidden'); status.classList.remove('hidden'); status.textContent = 'Uploading audio…';
+  const fileInput = form.querySelector('input[type="file"]');
+  const formData = new FormData(form);   // capture the file BEFORE disabling inputs
+  button.disabled = true; fileInput.disabled = true; results.classList.add('hidden'); status.classList.remove('hidden'); status.textContent = 'Uploading audio…';
   try {
-    const response = await fetch('/api/meetings', { method: 'POST', body: new FormData(form) });
+    const response = await fetch('/api/meetings', { method: 'POST', body: formData });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.detail || 'Upload failed.');
-    poll(payload.id);
+    await poll(payload.id);   // wait for processing to actually finish (or fail)
   } catch (error) { status.textContent = error.message; }
-  finally { button.disabled = false; }
+  finally { button.disabled = false; fileInput.disabled = false; }
 });
-
