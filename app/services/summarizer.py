@@ -5,18 +5,14 @@ from groq import APIConnectionError, InternalServerError, RateLimitError, Groq
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 MAX_CHUNK_CHARS, MIN_CHUNK_CHARS, MAX_COMPLETION_TOKENS = 12000, 2000, 4096
-SECTION_PROMPT = """You summarize one section of a meeting transcript. Use only information explicitly stated in the transcript. Do not infer or invent owners, dates, decisions, or action items. Use null for an explicitly mentioned but unknown owner or deadline.
 
-Return exactly one JSON object with every one of these keys: facts, decisions, action_items, open_questions. Every key is required, even when it has no content. Use [] for an empty list - never omit a key. Each decision must have text and timestamp. Each action item must have task, owner, deadline, and timestamp. Each open question must have text and timestamp.
+SECTION_SYSTEM_PROMPT = """You summarize one section of a meeting transcript. Use only information explicitly stated in the transcript. Do not infer or invent owners, dates, decisions, or action items. Use null for an explicitly mentioned but unknown owner or deadline.
 
-Transcript section:
-{transcript}"""
-FINAL_PROMPT = """Combine these factual section summaries into one final meeting summary. Use only supplied facts. Do not create or infer missing details. Deduplicate repeated entries.
+Return exactly one JSON object with every one of these keys: facts, decisions, action_items, open_questions. Every key is required, even when it has no content. Use [] for an empty list - never omit a key. Each decision must have text and timestamp. Each action item must have task, owner, deadline, and timestamp. Each open question must have text and timestamp."""
 
-Return exactly one JSON object with every one of these keys: overview, key_points, decisions, action_items, open_questions. Every key is required. Use [] for an empty list - never omit a key. Each decision must have text and timestamp. Each action item must have task, owner, deadline, and timestamp. Each open question must have text and timestamp.
+FINAL_SYSTEM_PROMPT = """Combine these factual section summaries into one final meeting summary. Use only supplied facts. Do not create or infer missing details. Deduplicate repeated entries.
 
-Section summaries:
-{summaries}"""
+Return exactly one JSON object with every one of these keys: overview, key_points, decisions, action_items, open_questions. Every key is required. Use [] for an empty list - never omit a key. Each decision must have text and timestamp. Each action item must have task, owner, deadline, and timestamp. Each open question must have text and timestamp."""
 
 _DECISION = {"type": "object", "properties": {"text": {"type": "string"}, "timestamp": {"type": ["string", "null"]}}, "required": ["text", "timestamp"], "additionalProperties": False}
 _ACTION_ITEM = {"type": "object", "properties": {"task": {"type": "string"}, "owner": {"type": ["string", "null"]}, "deadline": {"type": ["string", "null"]}, "timestamp": {"type": ["string", "null"]}}, "required": ["task", "owner", "deadline", "timestamp"], "additionalProperties": False}
@@ -44,16 +40,26 @@ def chunk_transcript(transcript: str, max_chars: int = MAX_CHUNK_CHARS) -> list[
 
 
 @retry(retry=retry_if_exception_type((APIConnectionError, InternalServerError, RateLimitError)), wait=wait_exponential(min=1, max=8), stop=stop_after_attempt(3), reraise=True)
-def _completion(client: Groq, prompt: str, model: str, schema: dict[str, Any]) -> str:
-    response = client.chat.completions.create(model=model, messages=[{"role": "user", "content": prompt}], temperature=0, max_completion_tokens=MAX_COMPLETION_TOKENS, reasoning_effort="low", response_format={"type": "json_schema", "json_schema": schema})
+def _completion(client: Groq, system_prompt: str, user_prompt: str, model: str, schema: dict[str, Any]) -> str:
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0,
+        max_completion_tokens=MAX_COMPLETION_TOKENS,
+        reasoning_effort="low",
+        response_format={"type": "json_schema", "json_schema": schema},
+    )
     choice, content = response.choices[0], response.choices[0].message.content or ""
     if not content.strip() or choice.finish_reason == "length":
         raise EmptyCompletionError(f"No complete JSON (finish_reason={choice.finish_reason!r}).")
     return content
 
 
-def _json_completion(client: Groq, prompt: str, model: str, schema: dict[str, Any]) -> dict[str, Any]:
-    result = json.loads(_completion(client, prompt, model, schema))
+def _json_completion(client: Groq, system_prompt: str, user_prompt: str, model: str, schema: dict[str, Any]) -> dict[str, Any]:
+    result = json.loads(_completion(client, system_prompt, user_prompt, model, schema))
     # Models occasionally omit empty arrays. Keep the stored/API contract stable.
     for key in ("key_points", "decisions", "action_items", "open_questions"):
         result.setdefault(key, [])
@@ -73,7 +79,8 @@ def _split_for_backoff(chunk: str) -> tuple[str, str]:
 
 def _summarize_section_with_backoff(client: Groq, chunk: str, model: str) -> dict[str, Any]:
     try:
-        return _json_completion(client, SECTION_PROMPT.replace("{transcript}", chunk), model, SECTION_SCHEMA)
+        user_content = f"Transcript section:\n{chunk}"
+        return _json_completion(client, SECTION_SYSTEM_PROMPT, user_content, model, SECTION_SCHEMA)
     except EmptyCompletionError:
         if len(chunk) <= MIN_CHUNK_CHARS:
             raise
@@ -88,4 +95,5 @@ def summarize_transcript(transcript: str, api_key: str, model: str = "openai/gpt
         raise RuntimeError("GROQ_API_KEY is not configured.")
     client = Groq(api_key=api_key)
     section_summaries = [_summarize_section_with_backoff(client, chunk, model) for chunk in chunk_transcript(transcript)]
-    return _json_completion(client, FINAL_PROMPT.replace("{summaries}", json.dumps(section_summaries)), model, FINAL_SCHEMA)
+    final_user_content = f"Section summaries:\n{json.dumps(section_summaries)}"
+    return _json_completion(client, FINAL_SYSTEM_PROMPT, final_user_content, model, FINAL_SCHEMA)

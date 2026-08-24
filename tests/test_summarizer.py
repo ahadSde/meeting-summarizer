@@ -42,7 +42,7 @@ def test_json_completion_normalizes_missing_fields() -> None:
     partial_json = json.dumps({"overview": "Short sync."})
 
     with patch("app.services.summarizer._completion", return_value=partial_json):
-        result = _json_completion(mock_client, "prompt", "model", {})
+        result = _json_completion(mock_client, "sys_prompt", "user_prompt", "model", {})
         assert result["overview"] == "Short sync."
         assert result["key_points"] == []
         assert result["decisions"] == []
@@ -60,7 +60,7 @@ def test_completion_raises_empty_completion_error_on_whitespace_or_length_finish
     mock_client.chat.completions.create.return_value = MagicMock(choices=[mock_choice_empty])
 
     with pytest.raises(EmptyCompletionError):
-        _completion(mock_client, "prompt", "model", {})
+        _completion(mock_client, "sys_prompt", "user_prompt", "model", {})
 
     # Truncated length finish_reason case
     mock_choice_length = MagicMock(finish_reason="length")
@@ -68,7 +68,7 @@ def test_completion_raises_empty_completion_error_on_whitespace_or_length_finish
     mock_client.chat.completions.create.return_value = MagicMock(choices=[mock_choice_length])
 
     with pytest.raises(EmptyCompletionError):
-        _completion(mock_client, "prompt", "model", {})
+        _completion(mock_client, "sys_prompt", "user_prompt", "model", {})
 
 
 def test_summarize_transcript_mocked_pipeline() -> None:
